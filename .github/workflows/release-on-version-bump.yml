@@ -10,19 +10,20 @@ on:
       - "app/src/main/AndroidManifest.xml"
   workflow_dispatch:
     inputs:
-      force_release:
-        description: "Build and publish even if versionCode did not change"
+      publish_release:
+        description: "Publish a public GitHub Release and update version.json (off = APK artifacts only)"
         type: boolean
         default: false
 
 concurrency:
-  group: release-on-version-bump
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   release:
     name: Build and Release
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
     steps:
@@ -50,7 +51,7 @@ jobs:
         id: version
         env:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
-          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_release || 'false' }}
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           python3 - <<'PY'
           import os, re, subprocess
@@ -119,7 +120,7 @@ jobs:
                   break
           vn_prev, vc_prev = parse_versions(text_prev)
 
-          # 只检查 versionCode 是否变化；手动重跑失败的发版可强制继续
+          # Push builds require a versionCode change; manual builds always run.
           changed = False
           if vc_head and (vc_head != (vc_prev or '')):
               changed = True
@@ -147,12 +148,23 @@ jobs:
         if: steps.version.outputs.changed == 'true'
         id: tag
         run: |
-          V="${{ steps.version.outputs.version_name }}"
-          if [ -z "$V" ]; then V="${{ steps.version.outputs.version_code }}"; fi
+          V="$VERSION_NAME"
+          if [ -z "$V" ]; then V="$VERSION_CODE"; fi
           if [ -z "$V" ]; then V="$(date +%Y%m%d)-${{ github.sha }}"; fi
           echo "tag=v$V" >> "$GITHUB_OUTPUT"
           echo "version_display=$V" >> "$GITHUB_OUTPUT"
           echo "当前 tag: v$V"
+          if [ "$PUBLISH_RELEASE" = "true" ]; then
+            EXISTING_SHA=$(git rev-list -n 1 "refs/tags/v$V" 2>/dev/null || true)
+            if [ -n "$EXISTING_SHA" ] && [ "$EXISTING_SHA" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag v$V already exists on a different commit. Increase versionName and versionCode before publishing."
+              exit 1
+            fi
+          fi
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish_release }}
 
       - name: Extract changelog from CHANGELOG.md
         if: steps.version.outputs.changed == 'true'
@@ -239,29 +251,37 @@ jobs:
           # Google 已下架旧的 `tools` 包，不能再用 action 默认值 `tools platform-tools`
           packages: platform-tools
 
-      - name: Check if keystore is configured
+      - name: Validate signing secrets
         if: steps.version.outputs.changed == 'true'
-        id: check_keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "has_keystore=true" >> "$GITHUB_OUTPUT"
-            echo "✅ 检测到签名密钥配置"
-          else
-            echo "has_keystore=false" >> "$GITHUB_OUTPUT"
-            echo "⚠️ 未配置签名密钥,将构建 Debug APK"
+          missing=0
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing Actions secret: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Configure all four signing secrets. This workflow never substitutes a Debug APK."
+            exit 1
           fi
 
-      - name: Decode and setup keystore
-        if: steps.version.outputs.changed == 'true' && steps.check_keystore.outputs.has_keystore == 'true'
+      - name: Decode and validate keystore
+        if: steps.version.outputs.changed == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          echo "解码签名密钥..."
-          echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
-          echo "KEYSTORE_FILE=${{ github.workspace }}/release.keystore" >> $GITHUB_ENV
-          ls -lh release.keystore
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/bibi-release.keystore"
+          keytool -list -keystore "$RUNNER_TEMP/bibi-release.keystore" -storepass:env KEYSTORE_PASSWORD -alias "$KEY_ALIAS" > /dev/null
+          echo "KEYSTORE_FILE=$RUNNER_TEMP/bibi-release.keystore" >> "$GITHUB_ENV"
 
       - name: Make Gradle wrapper executable
         if: steps.version.outputs.changed == 'true'
@@ -270,7 +290,7 @@ jobs:
           sed -i -e 's/\r$//' ./gradlew || true
 
       - name: Build Release APK with signing
-        if: steps.version.outputs.changed == 'true' && steps.check_keystore.outputs.has_keystore == 'true'
+        if: steps.version.outputs.changed == 'true'
         env:
           KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -296,29 +316,6 @@ jobs:
             ls -lh "$NEW_PATH"
           done
 
-      - name: Build Debug APK (fallback)
-        if: steps.version.outputs.changed == 'true' && steps.check_keystore.outputs.has_keystore != 'true'
-        env:
-          SF_FREE_API_KEY: ${{ secrets.SF_FREE_API_KEY }}
-          POCKETBASE_BASE_URL: ${{ secrets.POCKETBASE_BASE_URL || vars.POCKETBASE_BASE_URL }}
-          VERSION: ${{ steps.version.outputs.version_name }}
-        run: |
-          # APK 资产命名须与 app/.../ui/update/UpdateApkNaming.kt 当前前缀一致（debug 变体）
-          echo "未配置签名密钥,分 ABI 构建 Debug APK..."
-          mkdir -p release-artifacts
-          for ABI in arm64-v8a armeabi-v7a; do
-            echo "构建 ABI: $ABI"
-            ./gradlew --no-daemon clean :app:assembleDebug -PabiFilters="$ABI"
-            APK_PATH=$(ls app/build/outputs/apk/debug/*.apk 2>/dev/null | head -n 1 || true)
-            if [ -z "$APK_PATH" ]; then
-              echo "未找到 $ABI Debug APK"
-              exit 1
-            fi
-            NEW_PATH="release-artifacts/app-debug-${VERSION}-${ABI}.apk"
-            cp "$APK_PATH" "$NEW_PATH"
-            ls -lh "$NEW_PATH"
-          done
-
       - name: Locate built APKs
         if: steps.version.outputs.changed == 'true'
         id: locate_apks
@@ -336,8 +333,43 @@ jobs:
           echo "找到 APK 文件:"
           ls -lh release-artifacts/*.apk
 
-      - name: Update version.json
+      - name: Verify APK signatures and checksums
         if: steps.version.outputs.changed == 'true'
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+          test -n "$APKSIGNER"
+          for apk in release-artifacts/*.apk; do
+            "$APKSIGNER" verify --verbose --print-certs "$apk"
+          done
+          (cd release-artifacts && sha256sum *.apk > SHA256SUMS.txt)
+
+      - name: Upload signed Release APKs
+        if: steps.version.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-release-${{ steps.version.outputs.version_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.changed == 'true' && (github.event_name == 'push' || inputs.publish_release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          fail_on_unmatched_files: true
+          name: "Release ${{ steps.tag.outputs.version_display }}"
+          body_path: changelog.md
+          files: release-artifacts/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update version.json
+        if: steps.version.outputs.changed == 'true' && (github.event_name == 'push' || inputs.publish_release)
         id: update_version_json
         run: |
           echo "📝 更新 version.json 文件..."
@@ -379,7 +411,7 @@ jobs:
           # 更新版本信息
           data['version'] = version
           data['version_code'] = int(version_code) if version_code.isdigit() else 0
-          data['download_url'] = f"https://github.com/BryceWG/BiBi-Keyboard/releases/tag/{tag}"
+          data['download_url'] = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/tag/{tag}"
           data['release_notes'] = release_notes
           data['release_notes_en'] = release_notes_en
           data['min_supported_version'] = data.get('min_supported_version', '2.6.5')
@@ -410,108 +442,18 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
 
       - name: Commit and push version.json
-        if: steps.version.outputs.changed == 'true' && steps.update_version_json.outputs.version_changed == 'true'
+        if: steps.version.outputs.changed == 'true' && (github.event_name == 'push' || inputs.publish_release) && steps.update_version_json.outputs.version_changed == 'true'
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version_name }}
         run: |
-          echo "📤 提交 version.json 更新..."
-
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+          git add version.json
+          git commit -m "chore: auto-update version.json to $VERSION [skip ci]"
+          # Fast-forward only: fail if this branch advanced since the build.
+          git push origin "HEAD:refs/heads/$BRANCH_NAME"
 
-          # 最多重试 3 次
-          MAX_RETRIES=3
-          RETRY_COUNT=0
-
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            echo "🔄 尝试推送 (第 $((RETRY_COUNT + 1)) 次)..."
-
-            # 拉取最新的远程更改
-            git fetch origin ${{ github.ref_name }}
-            git reset --hard origin/${{ github.ref_name }}
-
-            # 重新应用 version.json 更改（从 release_notes_short.txt 和 release_notes_en_short.txt 读取已提取的内容）
-            python3 - <<'PY'
-          import json
-          import os
-          from datetime import datetime
-
-          version = os.environ.get('VERSION', '0.0.0')
-          version_code = os.environ.get('VERSION_CODE', '0')
-          tag = os.environ.get('TAG', 'v0.0.0')
-
-          # 从之前提取的 release_notes_short.txt 读取
-          try:
-              with open('release_notes_short.txt', 'r', encoding='utf-8') as f:
-                  release_notes = f.read().strip()
-          except FileNotFoundError:
-              release_notes = f'版本 {version} 已发布'
-
-          # 从之前提取的 release_notes_en_short.txt 读取
-          try:
-              with open('release_notes_en_short.txt', 'r', encoding='utf-8') as f:
-                  release_notes_en = f.read().strip()
-          except FileNotFoundError:
-              release_notes_en = f'Version {version} released'
-
-          current_timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-
-          try:
-              with open('version.json', 'r', encoding='utf-8') as f:
-                  data = json.load(f)
-          except (FileNotFoundError, json.JSONDecodeError):
-              data = {}
-
-          data['version'] = version
-          data['version_code'] = int(version_code) if version_code.isdigit() else 0
-          data['download_url'] = f"https://github.com/BryceWG/BiBi-Keyboard/releases/tag/{tag}"
-          data['release_notes'] = release_notes
-          data['release_notes_en'] = release_notes_en
-          data['min_supported_version'] = data.get('min_supported_version', '2.6.5')
-          data['update_time'] = current_timestamp
-
-          with open('version.json', 'w', encoding='utf-8') as f:
-              json.dump(data, f, ensure_ascii=False, indent=2)
-          PY
-
-            # 检查是否有变化
-            if git diff --quiet version.json; then
-              echo "ℹ️ version.json 无变化，无需推送"
-              break
-            fi
-
-            # 提交更改
-            git add version.json
-            git commit -m "chore: auto-update version.json to ${{ steps.version.outputs.version_name }} [skip ci]"
-
-            # 尝试推送
-            if git push origin HEAD:${{ github.ref_name }}; then
-              echo "✅ version.json 已成功推送"
-              break
-            else
-              echo "⚠️ 推送失败，可能存在冲突"
-              RETRY_COUNT=$((RETRY_COUNT + 1))
-              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "⏳ 等待 5 秒后重试..."
-                sleep 5
-              else
-                echo "❌ 达到最大重试次数，推送失败"
-                exit 1
-              fi
-            fi
-          done
-        env:
-          VERSION: ${{ steps.version.outputs.version_name }}
-          VERSION_CODE: ${{ steps.version.outputs.version_code }}
-          TAG: ${{ steps.tag.outputs.tag }}
-
-      - name: Create GitHub Release
-        if: steps.version.outputs.changed == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: "Release ${{ steps.tag.outputs.version_display }}"
-          body_path: changelog.md
-          files: ${{ steps.locate_apks.outputs.apk_paths }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/bibi-release.keystore"
