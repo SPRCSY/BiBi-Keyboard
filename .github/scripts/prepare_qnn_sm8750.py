@@ -5,8 +5,10 @@ its code and its bundled generic model are never executed or copied.
 """
 import argparse
 import hashlib
+import io
 import json
 from pathlib import Path
+import re
 import shutil
 import tarfile
 import time
@@ -57,13 +59,24 @@ def prepare(runtime_apk=None, model_archive=None):
     assets = dest / 'assets/qnn-sm8750'
     native.mkdir(parents=True, exist_ok=True)
     assets.mkdir(parents=True, exist_ok=True)
-    # Do not use the CPU AAR's JNI libraries. Its matching public Kotlin API is
-    # extracted separately so VAD/denoising and QNN share one JNI ABI/version.
+    # Do not use the CPU AAR's JNI libraries. Retain its VAD/denoising API;
+    # replace the differing offline binding with the checked-in QNN schema.
     with zipfile.ZipFile(ROOT / 'app/libs/sherpa-onnx-1.13.4.aar') as source:
         api = source.read('classes.jar')
     if hashlib.sha256(api).hexdigest() != lock['api_classes_sha256']:
         raise ValueError('Unexpected sherpa Kotlin API; JNI ABI compatibility is not established')
-    (dest / 'sherpa-api.jar').write_bytes(api)
+    # The official QNN APK has a different Moonshine JNI schema despite the
+    # same version label. Compile its offline binding schema from reviewed
+    # source, while retaining the AAR's other API classes for VAD/denoising.
+    overlay = ROOT / 'app/src/main/java/com/k2fsa/sherpa/onnx/OfflineRecognizer.kt'
+    replaced = set(re.findall(r'^(?:data )?class (\w+)', overlay.read_text(encoding='utf-8'), re.M))
+    replaced.add('OfflineRecognizerKt')
+    with zipfile.ZipFile(io.BytesIO(api)) as source, zipfile.ZipFile(dest / 'sherpa-api.jar', 'w') as output:
+        for entry in source.infolist():
+            basename = Path(entry.filename).name.split('$')[0].split('.')[0]
+            if entry.filename.startswith('com/k2fsa/sherpa/onnx/') and basename in replaced:
+                continue
+            output.writestr(entry, source.read(entry))
     with zipfile.ZipFile(apk) as source:
         for name in lock['native_libraries']:
             data = source.read(f'lib/arm64-v8a/{name}')

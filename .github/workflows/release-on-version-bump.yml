@@ -297,7 +297,7 @@ jobs:
         if: steps.version.outputs.changed == 'true'
         run: |
           python3 .github/scripts/test_qnn_artifact_setup.py
-          ./gradlew --no-daemon :app:testDebugUnitTest --tests '*QnnAudioWindowsTest' --tests '*QnnBuildDefaultsTest' -PabiFilters=arm64-v8a
+          ./gradlew --no-daemon :app:testDebugUnitTest --tests '*QnnAudioWindowsTest' --tests '*QnnBuildDefaultsTest' --tests '*QnnJniSchemaTest' -PabiFilters=arm64-v8a
 
       - name: Build Release APK with signing
         if: steps.version.outputs.changed == 'true'

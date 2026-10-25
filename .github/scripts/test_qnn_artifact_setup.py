@@ -25,7 +25,14 @@ class ArtifactSetupTest(unittest.TestCase):
                 setup.ROOT = root
                 setup.LOCK = root / 'lock.json'
                 (root / 'app/libs').mkdir(parents=True)
-                api = b'fixed Kotlin API fixture'
+                api_buffer = io.BytesIO()
+                with zipfile.ZipFile(api_buffer, 'w') as archive:
+                    archive.writestr('com/k2fsa/sherpa/onnx/OfflineMoonshineModelConfig.class', b'old schema')
+                    archive.writestr('com/k2fsa/sherpa/onnx/Vad.class', b'keep VAD')
+                api = api_buffer.getvalue()
+                overlay = root / 'app/src/main/java/com/k2fsa/sherpa/onnx/OfflineRecognizer.kt'
+                overlay.parent.mkdir(parents=True)
+                overlay.write_text('data class OfflineMoonshineModelConfig()', encoding='utf-8')
                 with zipfile.ZipFile(root / 'app/libs/sherpa-onnx-1.13.4.aar', 'w') as archive:
                     archive.writestr('classes.jar', api)
                     archive.writestr('jni/arm64-v8a/libsherpa-onnx-jni.so', b'CPU JNI MUST NOT BE USED')
@@ -48,6 +55,8 @@ class ArtifactSetupTest(unittest.TestCase):
                 }), encoding='utf-8')
                 setup.prepare(apk, model)
                 dest = root / 'app/qnn-runtime'
+                with zipfile.ZipFile(dest / 'sherpa-api.jar') as archive:
+                    self.assertEqual(['com/k2fsa/sherpa/onnx/Vad.class'], archive.namelist())
                 self.assertEqual(b'\x7fELF QNN JNI fixture', (dest / 'jniLibs/arm64-v8a/libsherpa-onnx-jni.so').read_bytes())
                 self.assertFalse(any(dest.rglob('libmodel.so')))
                 manifest = json.loads((dest / 'assets/qnn-sm8750/manifest.json').read_text())

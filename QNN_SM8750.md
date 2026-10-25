@@ -13,7 +13,13 @@ CI 执行 `python3 .github/scripts/prepare_qnn_sm8750.py`，生成忽略跟踪�
 
 普通 Release 未提供独立 QNN AAR；本分支从官方发布的同版本 QNN Android 示例 APK
 提取 JNI、ONNX Runtime 和 HTP/V79 库。APK 仅用作 ZIP 容器，不安装、不执行。
-原 AAR 仅提供经 SHA-256 固定的 Kotlin API 类，原 CPU JNI 不再参与打包。
+原 AAR 仅提供经 SHA-256 固定的 VAD 等 Kotlin API 类，原 CPU JNI 不再参与打包。
+注意：同为 1.13.4 的原 AAR 与 QNN APK 的离线配置接口并不完全一致；真机发现
+QNN JNI 还读取 Moonshine 的 decoder、qnnConfig 字段。离线识别接口改用
+`app/src/main/java/com/k2fsa/sherpa/onnx/OfflineRecognizer.kt` 中的源码，基于官方
+v1.13.4 API 并按固定 APK 的 DEX 字段补齐；结果 durations 使用 FloatArray。
+准备脚本剔除原 JAR 中对应类，避免重复类。QnnJniSchemaTest 防止该故障回归，
+Apache-2.0 许可见 third_party/sherpa-onnx/LICENSE。
 ONNX Runtime 保留给 Ten VAD、降噪及其他已有 CPU 功能；SenseVoice 固定为
 `provider=qnn`、`backendLib=libQnnHtp.so`、SM8750 `model.bin`，没有 CPU 回退。
 
