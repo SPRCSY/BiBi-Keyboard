@@ -19,7 +19,7 @@ QNN JNI 还读取 Moonshine 的 decoder、qnnConfig 字段。离线识别接口�
 `app/src/main/java/com/k2fsa/sherpa/onnx/OfflineRecognizer.kt` 中的源码，基于官方
 v1.13.4 API 并按固定 APK 的 DEX 字段补齐；结果 durations 使用 FloatArray。
 准备脚本剔除原 JAR 中对应类，避免重复类。QnnJniSchemaTest 防止该故障回归，
-Apache-2.0 许可见 third_party/sherpa-onnx/LICENSE。
+Apache-2.0 许可沿用已随 APK 打包的 app/src/main/assets/licenses/sherpa-onnx-LICENSE。
 ONNX Runtime 保留给 Ten VAD、降噪及其他已有 CPU 功能；SenseVoice 固定为
 `provider=qnn`、`backendLib=libQnnHtp.so`、SM8750 `model.bin`，没有 CPU 回退。
 
@@ -67,6 +67,15 @@ ONNX Runtime 保留给 Ten VAD、降噪及其他已有 CPU 功能；SenseVoice �
 6. 同一段语料分别在原 CPU APK 与 QNN APK 上测试冷启动、热推理耗时、长句准确率，
    并以相同录音时长、屏幕亮度、网络和温度条件比较耗电。没有实测前不承诺速度或功耗提升。
 
+## 2026-10-25 真机记录
+
+设备 RMX5090，SM8750，Android API 36。修复接口差异后，正式签名的 Release APK
+已加载 V79 Skel、从 SM8750 context binary 初始化 HTP，并实际执行推理。
+日志包含 QNN_INITIALIZED 和 QNN_INFERENCE_COMPLETE；一次约 6.4 秒的录音
+切为 80,000 / 26,400 样本两个窗口，分别耗时 47 / 56 ms。预览窗口观测为
+69–85 ms。这是此机本次日志的推理调用耗时，不代表 CPU 对照测试或端到端延迟。
+用户确认文字已上屏，并反馈“速度飞快”。功耗对照和更多长句接缝语料尚未完成。
+
 ## 验证命令
 
 ```
@@ -81,3 +90,4 @@ python .github/scripts/test_release_workflow.py  # 需 PyYAML 和 bash
 - https://k2-fsa.github.io/sherpa/onnx/android/apk-qnn-simulate-streaming-asr.html
 - https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models-qnn-binary
 - https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.4/sherpa-onnx/csrc/qnn/offline-sense-voice-model-qnn.cc
+
