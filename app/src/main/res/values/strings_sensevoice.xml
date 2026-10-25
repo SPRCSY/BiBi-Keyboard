@@ -1,7 +1,7 @@
 <resources>
     <!-- SenseVoice local ASR configuration strings -->
     <string name="sensevoice_section_title">SenseVoice Local ASR</string>
-    <string name="vendor_sensevoice">SenseVoice</string>
+    <string name="vendor_sensevoice">SenseVoice (QNN)</string>
 
     <!-- SenseVoice local settings -->
     <string name="label_sv_threads">Threads (1-8)</string>

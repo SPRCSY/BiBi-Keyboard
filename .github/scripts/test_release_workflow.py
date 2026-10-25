@@ -61,12 +61,19 @@ class ReleaseWorkflowTest(unittest.TestCase):
                          STEPS['Detect version change']['env']['FORCE_RELEASE'])
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / 'output'
+            fixture = Path(temp) / 'app'
+            fixture.mkdir()
+            (fixture / 'build.gradle.kts').write_text('versionName = "1.0"\nversionCode = 1\n', encoding='utf-8')
+            subprocess.run(['git', 'init', '-q'], cwd=temp, check=True)
+            subprocess.run(['git', 'add', 'app/build.gradle.kts'], cwd=temp, check=True)
+            subprocess.run(['git', '-c', 'user.name=Workflow test', '-c', 'user.email=test@example.invalid',
+                            'commit', '-qm', 'fixture'], cwd=temp, check=True)
             for manual, expected in [('true', 'true'), ('false', 'false')]:
                 env = dict(os.environ, FORCE_RELEASE=manual, GITHUB_EVENT_BEFORE='HEAD',
                            GITHUB_OUTPUT=str(output))
                 output.write_text('', encoding='utf-8')
                 result = subprocess.run([sys.executable, '-c', python_block('Detect version change')],
-                                        cwd=ROOT, env=env, capture_output=True, text=True)
+                                        cwd=temp, env=env, capture_output=True, text=True)
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertIn(f'changed={expected}', output.read_text(encoding='utf-8'))
 

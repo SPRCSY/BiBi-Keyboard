@@ -123,17 +123,9 @@ private fun SenseVoiceConfig(
 ) {
     var itemIndex = primaryIndexOffset
     val itemCount = primaryGroupCount ?: localAsrPrimaryItemCount(AsrVendor.SenseVoice)
-    LocalModelVariantPreference(
-        uiMode = uiMode,
-        spec = SenseVoiceModelSpec,
-        uiState = uiState,
-        localModelState = localModelState,
-        index = itemIndex++,
-        count = itemCount,
-        onVariantChange = {
-            viewModel.updateSvModelVariant(it)
-            localModelState.onRefresh()
-        }
+    androidx.compose.material3.Text(
+        text = stringResource(R.string.qnn_bundled_model_status),
+        modifier = Modifier.padding(16.dp)
     )
     AsrDropdownPreference(
         titleRes = R.string.label_sv_language,
@@ -144,17 +136,6 @@ private fun SenseVoiceConfig(
         onSelectedOptionChange = {
             viewModel.updateSvLanguage(it)
         }
-    )
-    AsrSliderPreference(
-        titleRes = R.string.label_sv_threads,
-        valueLabel = { it.toInt().toString() },
-        value = uiState.svNumThreads.toFloat(),
-        valueRange = 1f..8f,
-        steps = 6,
-        uiMode = uiMode,
-        index = itemIndex++,
-        count = itemCount,
-        onValueChange = { viewModel.updateSvNumThreads(it.toInt()) }
     )
     AsrSwitchPreference(
         id = "sv_use_itn",
@@ -195,13 +176,7 @@ private fun SenseVoiceConfig(
             viewModel.updateSvKeepAlive(it)
         }
     )
-    LocalModelOperations(
-        uiMode = uiMode,
-        spec = SenseVoiceModelSpec,
-        uiState = uiState,
-        localModelState = localModelState,
-        onOpenGuide = onOpenGuide
-    )
+
 }
 
 @Composable
@@ -814,7 +789,7 @@ private fun localModelStatusColor(
 }
 
 internal fun localAsrPrimaryItemCount(selectedVendor: AsrVendor): Int = when (selectedVendor) {
-    AsrVendor.SenseVoice -> 7
+    AsrVendor.SenseVoice -> 5
     AsrVendor.FunAsrNano -> 7
     AsrVendor.Qwen3Asr -> 5
     AsrVendor.Parakeet -> 4

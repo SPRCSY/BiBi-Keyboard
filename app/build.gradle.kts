@@ -28,8 +28,8 @@ android {
         applicationId = "com.brycewg.asrkb"
         minSdk = 26
         targetSdk = 36
-        versionCode = 178
-        versionName = "4.5.2"
+        versionCode = 179
+        versionName = "4.5.2-qnn-sm8750"
 
         // 默认仅构建 arm64-v8a 以减小包体体积；CI 可通过 -PabiFilters=armeabi-v7a 单独出包。
         ndk {
@@ -97,8 +97,13 @@ android {
             enableSplit = false
         }
     }
+    sourceSets.getByName("main").jniLibs.srcDir("qnn-runtime/jniLibs")
+    sourceSets.getByName("main").assets.srcDir("qnn-runtime/assets")
+
     packaging {
         jniLibs {
+            // QNN FastRPC must see a real extracted V79 Skel library on disk.
+            useLegacyPackaging = true
             excludes += listOf(
                 "**/libonnxruntime4j_jni.so",
                 "**/libsherpa-onnx-c-api.so",
@@ -190,6 +195,16 @@ dependencies {
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
 
-    // AAR 占位：sherpa-onnx Kotlin API AAR 放在 app/libs/ 会自动识别
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
+    // Matching Kotlin API only; all JNI libraries come from the pinned QNN runtime.
+    implementation(files("qnn-runtime/sherpa-api.jar"))
+}
+
+// All native libraries and the SoC-specific model are prebuilt, never compiled by Gradle.
+tasks.named("preBuild").configure {
+    doFirst {
+        check(packagedAbiFilters == listOf("arm64-v8a")) { "QNN SM8750 supports arm64-v8a only" }
+        check(file("qnn-runtime/ready.json").isFile) {
+            "Run python .github/scripts/prepare_qnn_sm8750.py before building this QNN branch"
+        }
+    }
 }

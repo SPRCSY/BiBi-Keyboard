@@ -283,11 +283,21 @@ jobs:
           keytool -list -keystore "$RUNNER_TEMP/bibi-release.keystore" -storepass:env KEYSTORE_PASSWORD -alias "$KEY_ALIAS" > /dev/null
           echo "KEYSTORE_FILE=$RUNNER_TEMP/bibi-release.keystore" >> "$GITHUB_ENV"
 
+      - name: Prepare prebuilt QNN SM8750 runtime and model
+        if: steps.version.outputs.changed == 'true'
+        run: python3 .github/scripts/prepare_qnn_sm8750.py
+
       - name: Make Gradle wrapper executable
         if: steps.version.outputs.changed == 'true'
         run: |
           chmod +x ./gradlew || true
           sed -i -e 's/\r$//' ./gradlew || true
+
+      - name: Check QNN audio windows and defaults
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          python3 .github/scripts/test_qnn_artifact_setup.py
+          ./gradlew --no-daemon :app:testDebugUnitTest --tests '*QnnAudioWindowsTest' --tests '*QnnBuildDefaultsTest' -PabiFilters=arm64-v8a
 
       - name: Build Release APK with signing
         if: steps.version.outputs.changed == 'true'
@@ -303,7 +313,7 @@ jobs:
           # APK 资产命名须与 app/.../ui/update/UpdateApkNaming.kt 首选项一致
           echo "使用签名密钥分 ABI 构建 Release APK..."
           mkdir -p release-artifacts
-          for ABI in arm64-v8a armeabi-v7a; do
+          for ABI in arm64-v8a; do
             echo "构建 ABI: $ABI"
             ./gradlew --no-daemon clean :app:assembleRelease -PabiFilters="$ABI"
             APK_PATH=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | grep -v unaligned | head -n 1 || true)

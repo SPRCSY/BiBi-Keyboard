@@ -306,7 +306,7 @@ internal class SenseVoicePseudoStreamDelegate(
                 Log.w(tag, "Failed to get useItn", t)
                 false
             },
-            provider = "cpu",
+            provider = "qnn",
             numThreads = try {
                 prefs.svNumThreads
             } catch (t: Throwable) {

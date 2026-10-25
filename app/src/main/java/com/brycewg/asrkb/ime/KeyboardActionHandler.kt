@@ -12,7 +12,6 @@ import com.brycewg.asrkb.asr.AsrVendor
 import com.brycewg.asrkb.asr.BackupAwareAsrEngine
 import com.brycewg.asrkb.asr.LlmPostProcessor
 import com.brycewg.asrkb.asr.ProgressiveRetryStatusOwner
-import com.brycewg.asrkb.asr.VadAutoStopGuard
 import com.brycewg.asrkb.store.AsrHistoryStore
 import com.brycewg.asrkb.store.Prefs
 import com.brycewg.asrkb.store.debug.DebugLogManager
@@ -199,28 +198,12 @@ class KeyboardActionHandler(
     // 长按期间的"按住状态"和自动重启计数（用于应对录音被系统提前中断的设备差异）
     private var micHoldActive: Boolean = false
     private var micHoldRestartCount: Int = 0
-    private var autoStopSuppression: AutoCloseable? = null
 
     // 自动启动录音标志：标识当前录音是否由键盘面板自动启动
     private var isAutoStartedRecording: Boolean = false
 
     private fun scheduleProcessingTimeout(audioMsOverride: Long? = null) {
         processingTimeoutController.schedule(audioMsOverride)
-    }
-
-    private fun ensureAutoStopSuppressed() {
-        if (autoStopSuppression != null) return
-        autoStopSuppression = VadAutoStopGuard.acquire()
-    }
-
-    private fun releaseAutoStopSuppression() {
-        val token = autoStopSuppression ?: return
-        autoStopSuppression = null
-        try {
-            token.close()
-        } catch (t: Throwable) {
-            Log.w(TAG, "Failed to release auto-stop suppression", t)
-        }
     }
 
     fun setUiListener(listener: UiListener) {
@@ -362,7 +345,6 @@ class KeyboardActionHandler(
     fun handleMicPressDown() {
         micHoldActive = true
         micHoldRestartCount = 0
-        ensureAutoStopSuppressed()
         try {
             DebugLogManager.log(
                 category = "ime",
@@ -457,7 +439,6 @@ class KeyboardActionHandler(
         val state = currentState as? KeyboardState.Listening ?: return
         if (state.lockedBySwipe) return
         micHoldActive = false
-        releaseAutoStopSuppression()
         autoEnterOnce = false
         isAutoStartedRecording = false
         val newState = state.copy(lockedBySwipe = true)
@@ -468,7 +449,6 @@ class KeyboardActionHandler(
         val state = currentState as? KeyboardState.Listening ?: return
         markDropPendingRecognition()
         micHoldActive = false
-        releaseAutoStopSuppression()
         autoEnterOnce = false
         isAutoStartedRecording = false
         asrManager.cancelRecording(discardPending = true)
@@ -506,7 +486,6 @@ class KeyboardActionHandler(
     fun handleMicPressUp(autoEnterAfterFinal: Boolean) {
         autoEnterOnce = autoEnterAfterFinal
         micHoldActive = false
-        releaseAutoStopSuppression()
         isAutoStartedRecording = false // 清除自动启动标志
         try {
             DebugLogManager.log(
