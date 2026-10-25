@@ -36,6 +36,7 @@ import com.brycewg.asrkb.store.Prefs
 import com.brycewg.asrkb.store.debug.DebugLogManager
 import com.brycewg.asrkb.ui.AsrVendorUi
 import com.brycewg.asrkb.ui.SettingsActivity
+import com.brycewg.asrkb.ui.floating.KeepAliveRecovery
 import com.brycewg.asrkb.util.HapticFeedbackHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -153,6 +154,7 @@ class AsrKeyboardService :
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
+        KeepAliveRecovery.ensureRunning(this, "ime_created")
         themeStyler = ImeThemeStyler(prefs)
         layoutController = ImeLayoutController(
             prefs = prefs,
@@ -304,6 +306,7 @@ class AsrKeyboardService :
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        KeepAliveRecovery.ensureRunning(this, "ime_shown")
         imeViewVisible = true
         layoutController?.onInputViewStarted()
         if (layoutController?.applyKeyboardHeightScale() == true) {

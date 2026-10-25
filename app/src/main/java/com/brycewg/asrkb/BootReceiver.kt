@@ -1,5 +1,5 @@
 /**
- * 开机自启广播接收器：按偏好恢复悬浮球与后台保活相关能力。
+ * 开机及升级广播接收器：按偏好恢复悬浮球与后台保活相关能力。
  *
  * 归属模块：根目录与通用
  */
@@ -10,8 +10,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import com.brycewg.asrkb.store.Prefs
@@ -24,7 +22,7 @@ import com.brycewg.asrkb.ui.floating.PrivilegedKeepAliveStarter
 import java.util.concurrent.Executors
 
 /**
- * 开机自启广播接收器：
+ * 开机及升级广播接收器：
  * - 按偏好启动悬浮服务（前提：已授予悬浮窗权限）
  * - 若具备 WRITE_SECURE_SETTINGS（ADB/系统应用），尝试自动开启无障碍服务
  */
@@ -32,7 +30,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
         if (action != Intent.ACTION_BOOT_COMPLETED &&
-            action != Intent.ACTION_LOCKED_BOOT_COMPLETED
+            action != Intent.ACTION_MY_PACKAGE_REPLACED
         ) {
             return
         }
@@ -45,12 +43,10 @@ class BootReceiver : BroadcastReceiver() {
             )
         )
 
-        val handler = Handler(Looper.getMainLooper())
-        // 略微延迟，等系统服务就绪
-        handler.postDelayed({
-            tryStartOverlayServices(context)
-            tryEnableAccessibilityIfPermitted(context)
-        }, 2500L)
+        // Use the broadcast's FGS start exemption while onReceive is active. A delayed
+        // Handler callback can outlive both the receiver and its process.
+        tryStartOverlayServices(context)
+        tryEnableAccessibilityIfPermitted(context)
     }
 
     private fun tryStartOverlayServices(context: Context) {
