@@ -42,6 +42,10 @@ class FloatingKeepAliveService : Service() {
     private var notificationRefreshJob: Job? = null
 
     companion object {
+        @Volatile
+        var isRunning: Boolean = false
+            private set
+
         private const val TAG = "FloatingKeepAliveSvc"
         private const val CHANNEL_ID = "floating_keep_alive"
         private const val NOTIFICATION_ID = 4101
@@ -75,11 +79,8 @@ class FloatingKeepAliveService : Service() {
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, FloatingKeepAliveService::class.java).apply {
-                action = ACTION_STOP
-                putExtra(EXTRA_CALLER_TOKEN, getOrCreateCallerToken(context))
-            }
-            context.startService(intent)
+            // Do not create a background service just to stop it.
+            context.stopService(Intent(context, FloatingKeepAliveService::class.java))
         }
     }
 
@@ -129,7 +130,7 @@ class FloatingKeepAliveService : Service() {
                 } catch (_: Throwable) {
                     null
                 }
-                if (prefs != null && !prefs.floatingKeepAliveEnabled) {
+                if (prefs == null || !prefs.floatingKeepAliveEnabled) {
                     DebugLogManager.logPersistent(
                         this,
                         "keepalive",
@@ -138,7 +139,9 @@ class FloatingKeepAliveService : Service() {
                             "reason" to "pref_disabled"
                         )
                     )
-                    stopForegroundSafely()
+                    keepAliveStarted = false
+                    stopNotificationRefreshLoop()
+                    clearNotificationSafely()
                     stopSelf()
                     return START_NOT_STICKY
                 }
@@ -157,7 +160,7 @@ class FloatingKeepAliveService : Service() {
                     return START_STICKY
                 }
                 keepAliveStarted = true
-                startForegroundWithNotification()
+                if (!startForegroundWithNotification()) return START_NOT_STICKY
                 DebugLogManager.logPersistent(
                     this,
                     "keepalive",
@@ -197,6 +200,7 @@ class FloatingKeepAliveService : Service() {
     }
 
     override fun onDestroy() {
+        isRunning = false
         keepAliveStarted = false
         stopNotificationRefreshLoop()
         serviceScope.cancel()
@@ -216,15 +220,16 @@ class FloatingKeepAliveService : Service() {
         KeepAliveNotificationClick.defaultRoute.id
     }
 
-    private fun startForegroundWithNotification() {
+    private fun startForegroundWithNotification(): Boolean {
         val notification = buildKeepAliveNotification()
         try {
             synchronized(notificationStateLock) {
-                if (!keepAliveStarted) return
+                if (!keepAliveStarted) return false
                 startForeground(NOTIFICATION_ID, notification)
+                isRunning = true
             }
         } catch (t: RuntimeException) {
-            if (!isForegroundServiceStartRejected(t)) throw t
+            if (t !is SecurityException && !isForegroundServiceStartRejected(t)) throw t
             Log.w(TAG, "Foreground keep-alive start rejected by system", t)
             DebugLogManager.logPersistent(
                 this,
@@ -238,9 +243,10 @@ class FloatingKeepAliveService : Service() {
             keepAliveStarted = false
             stopNotificationRefreshLoop()
             stopSelf()
-            return
+            return false
         }
         startNotificationRefreshLoop()
+        return true
     }
 
     private fun localizedContext(): Context = LocaleHelper.wrap(this)
@@ -326,6 +332,7 @@ class FloatingKeepAliveService : Service() {
 
     private fun clearNotificationSafely() {
         synchronized(notificationStateLock) {
+            isRunning = false
             stopForegroundSafely()
             try {
                 notificationManager.cancel(NOTIFICATION_ID)

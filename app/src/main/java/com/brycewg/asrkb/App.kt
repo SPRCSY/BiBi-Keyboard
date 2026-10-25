@@ -21,7 +21,7 @@ import com.brycewg.asrkb.store.ApiLogStore
 import com.brycewg.asrkb.store.Prefs
 import com.brycewg.asrkb.store.debug.DebugLogManager
 import com.brycewg.asrkb.ui.floating.FloatingAsrService
-import com.brycewg.asrkb.ui.floating.FloatingKeepAliveService
+import com.brycewg.asrkb.ui.floating.KeepAliveRecovery
 import com.brycewg.asrkb.ui.floating.PrivilegedKeepAliveScheduler
 import com.brycewg.asrkb.ui.floating.PrivilegedKeepAliveStarter
 import com.google.android.material.color.DynamicColors
@@ -93,11 +93,6 @@ class App : Application() {
                 }
                 startService(intent)
                 DebugLogManager.logBase(this, "float", "app_start_show_service")
-            }
-
-            if (prefs.floatingKeepAliveEnabled) {
-                FloatingKeepAliveService.start(this)
-                DebugLogManager.logBase(this, "keepalive", "app_start_service")
             }
         } catch (t: Throwable) {
             Log.w("App", "Failed to start overlay services", t)
@@ -176,6 +171,7 @@ class App : Application() {
                 }
                 override fun onActivityResumed(activity: Activity) {
                     applyExcludeFromRecents(activity)
+                    KeepAliveRecovery.ensureRunning(activity, "activity_resumed")
                     DebugLogManager.updateProcessStateSummary(
                         "phase=activity_resumed;activity=${activity.javaClass.simpleName.take(24)}"
                     )

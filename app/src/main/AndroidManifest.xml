@@ -207,14 +207,14 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- 开机启动接收器：根据偏好启动悬浮服务，并在具备权限时尝试开启无障碍 -->
+        <!-- 开机/升级接收器：解锁后根据偏好恢复服务，并在具备权限时尝试开启无障碍 -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
