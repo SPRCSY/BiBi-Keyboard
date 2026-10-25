@@ -1,7 +1,7 @@
 <resources>
     <!-- SenseVoice ローカル ASR 設定文字列 -->
     <string name="sensevoice_section_title">SenseVoiceローカルASR</string>
-    <string name="vendor_sensevoice">SenseVoice</string>
+    <string name="vendor_sensevoice">SenseVoice (QNN)</string>
 
     <!-- SenseVoice local settings -->
     <string name="label_sv_threads">スレッド数（1-8）</string>

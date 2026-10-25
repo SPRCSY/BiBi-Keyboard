@@ -1,0 +1,3 @@
+<resources>
+    <string name="qnn_bundled_model_status">已内置 SM8750 专用 SenseVoice QNN 模型（5 秒）。长音频自动分段；不支持其他芯片。</string>
+</resources>

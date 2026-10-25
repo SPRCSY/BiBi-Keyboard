@@ -54,6 +54,9 @@
         android:usesCleartextTraffic="true"
         tools:targetApi="tiramisu">
 
+        <!-- FastRPC access is required by QNN/HTP on Android 12+. -->
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+
         <activity
             android:name=".ui.SettingsActivity"
             android:exported="true"

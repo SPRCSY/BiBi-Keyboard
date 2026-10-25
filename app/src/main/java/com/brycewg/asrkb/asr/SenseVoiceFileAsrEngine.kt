@@ -7,15 +7,18 @@ import android.util.Log
 import android.widget.Toast
 import com.brycewg.asrkb.R
 import com.brycewg.asrkb.store.Prefs
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
+import com.k2fsa.sherpa.onnx.QnnConfig
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 
 /**
- * 本地 SenseVoice（通过 sherpa-onnx）非流式文件识别引擎。
- * 目前为占位实现：当 sherpa-onnx 依赖与模型未接入时，给出友好提示而不发起录音后的无效识别。
- * 后续接入模型与 AAR/so 后，可在 [recognize] 中补充实际推理调用。
+ * SM8750 SenseVoice QNN 文件识别引擎，沿用现有录音、VAD 与上屏管道。
  */
 class SenseVoiceFileAsrEngine(
     context: Context,
@@ -177,7 +180,7 @@ class SenseVoiceFileAsrEngine(
                     Log.w("SenseVoiceFileAsrEngine", "Failed to get useItn", t)
                     false
                 },
-                provider = "cpu",
+                provider = "qnn",
                 numThreads = try {
                     prefs.svNumThreads
                 } catch (t: Throwable) {
@@ -316,7 +319,7 @@ fun preloadSenseVoiceIfConfigured(
         val useItn = prefs.svUseItn
         val numThreads = prefs.svNumThreads
 
-        val key = "sensevoice|tokens=${resolvedModel.tokensPath}|model=${resolvedModel.modelPath}|lang=$language|itn=$useItn|provider=cpu|threads=$numThreads"
+        val key = "sensevoice|tokens=${resolvedModel.tokensPath}|model=${resolvedModel.modelPath}|lang=$language|itn=$useItn|provider=qnn|threads=$numThreads"
         val mainHandler = Handler(Looper.getMainLooper())
 
         LocalModelLoadCoordinator.request(key) {
@@ -328,7 +331,7 @@ fun preloadSenseVoiceIfConfigured(
                 model = resolvedModel.modelPath,
                 language = language,
                 useItn = useItn,
-                provider = "cpu",
+                provider = "qnn",
                 numThreads = numThreads,
                 keepAliveMs = keepMs,
                 alwaysKeep = alwaysKeep,
@@ -382,107 +385,7 @@ internal data class SenseVoiceResolvedModel(
     val modelPath: String
 )
 
-private object SenseVoiceModelResolverCache {
-    @Volatile private var cachedKey: String? = null
-
-    @Volatile private var cachedValue: SenseVoiceResolvedModel? = null
-
-    fun resolve(context: Context, prefs: Prefs): LocalModelCheck<SenseVoiceResolvedModel> {
-        val base = try {
-            context.getExternalFilesDir(null)
-        } catch (t: Throwable) {
-            Log.w("SenseVoiceResolver", "Failed to get external files dir", t)
-            null
-        } ?: context.filesDir
-        val probeRoot = File(base, "sensevoice")
-        val rawVariant = try {
-            prefs.svModelVariant
-        } catch (t: Throwable) {
-            Log.w("SenseVoiceResolver", "Failed to get model variant", t)
-            "small-int8"
-        }
-        val variant = if (rawVariant == "small-full") "small-full" else "small-int8"
-        val cacheKey = probeRoot.absolutePath + "|" + variant
-        val cached = if (cachedKey == cacheKey) cachedValue else null
-        if (cached != null && isUsable(context, cached)) return LocalModelCheck.Ready(cached)
-
-        val variantDir = File(probeRoot, variant)
-        val modelDir = findSvModelDir(variantDir) ?: return resolveFallback(context, probeRoot, variant)
-        val tokensPath = File(modelDir, "tokens.txt").absolutePath
-        val modelFile = selectSvModelFile(modelDir, variant) ?: return LocalModelCheck.Missing
-        val spec = if (variant == "small-full") {
-            LocalModelSpecs.SenseVoice.smallFull
-        } else {
-            LocalModelSpecs.SenseVoice.smallInt8
-        }
-        when (
-            val check = requireModelFilesCached(
-                context,
-                File(tokensPath) to LocalModelSpecs.SenseVoice.tokens,
-                modelFile to spec
-            )
-        ) {
-            is LocalModelCheck.IntegrityError -> return LocalModelCheck.IntegrityError(check.fileName)
-            LocalModelCheck.Missing -> return LocalModelCheck.Missing
-            is LocalModelCheck.Ready -> Unit
-        }
-
-        return LocalModelCheck.Ready(
-            SenseVoiceResolvedModel(
-                variant = variant,
-                modelDir = modelDir,
-                tokensPath = tokensPath,
-                modelPath = modelFile.absolutePath
-            ).also {
-                cachedKey = cacheKey
-                cachedValue = it
-            }
-        )
-    }
-
-    private fun resolveFallback(context: Context, probeRoot: File, requestedVariant: String): LocalModelCheck<SenseVoiceResolvedModel> {
-        val modelDir = findSvModelDir(probeRoot) ?: return LocalModelCheck.Missing
-        val tokensPath = File(modelDir, "tokens.txt").absolutePath
-        val modelFile = selectSvModelFile(modelDir, requestedVariant) ?: return LocalModelCheck.Missing
-        val spec = when (modelFile.name) {
-            "model.onnx" -> LocalModelSpecs.SenseVoice.smallFull
-            else -> LocalModelSpecs.SenseVoice.smallInt8
-        }
-        when (
-            val check = requireModelFilesCached(
-                context,
-                File(tokensPath) to LocalModelSpecs.SenseVoice.tokens,
-                modelFile to spec
-            )
-        ) {
-            is LocalModelCheck.IntegrityError -> return LocalModelCheck.IntegrityError(check.fileName)
-            LocalModelCheck.Missing -> return LocalModelCheck.Missing
-            is LocalModelCheck.Ready -> Unit
-        }
-        return LocalModelCheck.Ready(
-            SenseVoiceResolvedModel(
-                variant = requestedVariant,
-                modelDir = modelDir,
-                tokensPath = tokensPath,
-                modelPath = modelFile.absolutePath
-            )
-        )
-    }
-
-    private fun isUsable(context: Context, model: SenseVoiceResolvedModel): Boolean {
-        val spec = when (File(model.modelPath).name) {
-            "model.onnx" -> LocalModelSpecs.SenseVoice.smallFull
-            else -> LocalModelSpecs.SenseVoice.smallInt8
-        }
-        return requireModelFilesCached(
-            context,
-            File(model.tokensPath) to LocalModelSpecs.SenseVoice.tokens,
-            File(model.modelPath) to spec
-        ) is LocalModelCheck.Ready
-    }
-}
-
-internal fun checkSenseVoiceModel(context: Context, prefs: Prefs): LocalModelCheck<SenseVoiceResolvedModel> = SenseVoiceModelResolverCache.resolve(context, prefs)
+internal fun checkSenseVoiceModel(context: Context, prefs: Prefs): LocalModelCheck<SenseVoiceResolvedModel> = QnnSenseVoiceRuntime.resolve(context)
 
 internal fun resolveSenseVoiceModel(context: Context, prefs: Prefs): SenseVoiceResolvedModel? = (checkSenseVoiceModel(context, prefs) as? LocalModelCheck.Ready)?.value
 
@@ -570,64 +473,35 @@ internal class SenseVoiceOnnxManager private constructor() : BaseSherpaOfflineRe
 
     @Volatile private var clsOfflineRecognizerConfig: Class<*>? = null
 
-    @Volatile private var clsOfflineModelConfig: Class<*>? = null
-
-    @Volatile private var clsOfflineSenseVoiceModelConfig: Class<*>? = null
-
     fun isOnnxAvailable(): Boolean = sherpaIsClassAvailable(
         TAG,
         "com.k2fsa.sherpa.onnx.OfflineRecognizer"
     )
 
     /**
-     * 构建 SenseVoice 模型配置
-     * sherpa-onnx 1.12.20+: useItn 已重命名为 useInverseTextNormalization
-     */
-    private fun buildSenseVoiceConfig(model: String, language: String, useItn: Boolean): Any {
-        val inst = clsOfflineSenseVoiceModelConfig!!.getDeclaredConstructor().newInstance()
-        trySetField(inst, "model", model)
-        trySetField(inst, "language", language)
-        trySetField(inst, "useInverseTextNormalization", useItn)
-        return inst
-    }
-
-    /**
-     * 构建模型配置
-     */
-    private fun buildModelConfig(
-        tokens: String,
-        numThreads: Int,
-        provider: String,
-        senseVoice: Any
-    ): Any {
-        val modelConfig = clsOfflineModelConfig!!.getDeclaredConstructor().newInstance()
-        trySetField(modelConfig, "tokens", tokens)
-        trySetField(modelConfig, "numThreads", numThreads)
-        trySetField(modelConfig, "provider", provider)
-        trySetField(modelConfig, "debug", false)
-
-        // Kotlin 属性名可能为 senseVoice 或 sense_voice
-        if (!trySetField(modelConfig, "senseVoice", senseVoice)) {
-            trySetField(modelConfig, "sense_voice", senseVoice)
-        }
-
-        return modelConfig
-    }
-
-    /**
      * 构建识别器配置
      */
     protected override fun buildRecognizerConfig(config: Any): Any {
         config as RecognizerConfig
-        val senseVoice = buildSenseVoiceConfig(config.model, config.language, config.useItn)
-        val modelConfig =
-            buildModelConfig(config.tokens, config.numThreads, config.provider, senseVoice)
-
-        val recConfig = clsOfflineRecognizerConfig!!.getDeclaredConstructor().newInstance()
-        if (!trySetField(recConfig, "modelConfig", modelConfig)) {
-            trySetField(recConfig, "model_config", modelConfig)
-        }
-        return recConfig
+        val nativeDir = QnnSenseVoiceRuntime.initialize()
+        return OfflineRecognizerConfig(
+            modelConfig = OfflineModelConfig(
+                tokens = config.tokens,
+                numThreads = 1,
+                provider = "qnn",
+                debug = true,
+                senseVoice = OfflineSenseVoiceModelConfig(
+                    model = "",
+                    language = config.language,
+                    useInverseTextNormalization = config.useItn,
+                    qnnConfig = QnnConfig(
+                        backendLib = File(nativeDir, "libQnnHtp.so").path,
+                        contextBinary = config.model,
+                        systemLib = File(nativeDir, "libQnnSystem.so").path
+                    )
+                )
+            )
+        )
     }
 
     /**
@@ -636,13 +510,20 @@ internal class SenseVoiceOnnxManager private constructor() : BaseSherpaOfflineRe
     protected override fun createRecognizer(
         assetManager: android.content.res.AssetManager?,
         recognizerConfig: Any
-    ): Any = sherpaCreateOfflineRecognizer(
-        tag = TAG,
-        recognizerClass = clsOfflineRecognizer!!,
-        recognizerConfigClass = clsOfflineRecognizerConfig!!,
-        assetManager = assetManager,
-        recognizerConfig = recognizerConfig
-    )
+    ): Any {
+        check(assetManager == null) { "QNN context binaries require filesystem paths" }
+        val raw = sherpaCreateOfflineRecognizer(
+            tag = TAG,
+            recognizerClass = clsOfflineRecognizer!!,
+            recognizerConfigClass = clsOfflineRecognizerConfig!!,
+            assetManager = assetManager,
+            recognizerConfig = recognizerConfig
+        )
+        val pointer = raw.javaClass.getDeclaredField("ptr").apply { isAccessible = true }.getLong(raw)
+        check(pointer != 0L) { "QNN/HTP recognizer initialization failed; CPU fallback is disabled" }
+        Log.i(QnnSenseVoiceRuntime.TAG, "QNN_INITIALIZED provider=qnn backend=HTP htp=V79")
+        return raw
+    }
 
     /**
      * 初始化反射类引用
@@ -652,17 +533,9 @@ internal class SenseVoiceOnnxManager private constructor() : BaseSherpaOfflineRe
             clsOfflineRecognizer = Class.forName("com.k2fsa.sherpa.onnx.OfflineRecognizer")
             clsOfflineRecognizerConfig =
                 Class.forName("com.k2fsa.sherpa.onnx.OfflineRecognizerConfig")
-            clsOfflineModelConfig = Class.forName("com.k2fsa.sherpa.onnx.OfflineModelConfig")
-            clsOfflineSenseVoiceModelConfig =
-                Class.forName("com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig")
             Log.d(TAG, "Initialized sherpa-onnx reflection classes")
         }
     }
-
-    /**
-     * 尝试设置对象字段
-     */
-    private fun trySetField(target: Any, name: String, value: Any?): Boolean = sherpaTrySetField(TAG, target, name, value)
 
     protected override fun offlineRecognizerClass(): Class<*> = clsOfflineRecognizer!!
 
@@ -685,24 +558,39 @@ internal class SenseVoiceOnnxManager private constructor() : BaseSherpaOfflineRe
         onLoadDone: (() -> Unit)? = null
     ): String? = mutex.withLock {
         try {
-            val config = RecognizerConfig(tokens, model, language, useItn, provider, numThreads)
+            val config = RecognizerConfig(tokens, model, language, useItn, "qnn", 1)
             val recognizer = ensurePreparedLocked(assetManager, config, onLoadStart, onLoadDone)
                 ?: return@withLock null
 
-            val stream = recognizer.createStream()
-            try {
-                stream.acceptWaveform(samples, sampleRate)
-                val text = recognizer.decode(stream)
-                scheduleAutoUnload(keepAliveMs, alwaysKeep)
-                return@withLock text
-            } finally {
-                stream.release()
+            val windows = QnnSenseVoiceRuntime.windows(samples, sampleRate)
+            var text = ""
+            var previousEnd = 0
+            for ((index, range) in windows.withIndex()) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val stream = recognizer.createStream()
+                val started = android.os.SystemClock.elapsedRealtime()
+                try {
+                    stream.acceptWaveform(QnnAudioWindows.padded(samples, range), sampleRate)
+                    val part = recognizer.decode(stream).orEmpty()
+                    text = QnnAudioWindows.append(text, part, range.first < previousEnd)
+                    previousEnd = range.last + 1
+                    Log.i(
+                        QnnSenseVoiceRuntime.TAG,
+                        "QNN_INFERENCE_COMPLETE provider=qnn backend=HTP window=${index + 1}/${windows.size} " +
+                            "audioSamples=${range.count()} paddedSamples=${QnnAudioWindows.WINDOW_SAMPLES} " +
+                            "elapsedMs=${android.os.SystemClock.elapsedRealtime() - started}"
+                    )
+                } finally {
+                    stream.release()
+                }
             }
+            scheduleAutoUnload(keepAliveMs, alwaysKeep)
+            return@withLock text
         } catch (t: CancellationException) {
             throw t
         } catch (t: Throwable) {
             Log.e(TAG, "Failed to decode offline: ${t.message}", t)
-            return@withLock null
+            throw t
         }
     }
 
@@ -723,7 +611,7 @@ internal class SenseVoiceOnnxManager private constructor() : BaseSherpaOfflineRe
         onLoadDone: (() -> Unit)? = null
     ): Boolean = mutex.withLock {
         try {
-            val config = RecognizerConfig(tokens, model, language, useItn, provider, numThreads)
+            val config = RecognizerConfig(tokens, model, language, useItn, "qnn", 1)
             val ok = ensurePreparedLocked(assetManager, config, onLoadStart, onLoadDone) != null
             if (!ok) return@withLock false
             scheduleAutoUnload(keepAliveMs, alwaysKeep)

@@ -1,7 +1,7 @@
 <resources>
     <!-- SenseVoice 本地 ASR 配置字符串 -->
     <string name="sensevoice_section_title">SenseVoice 本地 ASR</string>
-    <string name="vendor_sensevoice">SenseVoice</string>
+    <string name="vendor_sensevoice">SenseVoice (QNN)</string>
 
     <!-- SenseVoice local settings -->
     <string name="label_sv_threads">线程数（1-8）</string>

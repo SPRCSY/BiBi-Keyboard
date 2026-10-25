@@ -1,0 +1,24 @@
+{
+  "sherpa_version": "1.13.4",
+  "soc": "SM8750",
+  "htp": "V79",
+  "seconds": 5,
+  "api_classes_sha256": "3f85f83d0dd325aa19f29f76f27d711e23b130e31ff274924f4f7c2b27e50fec",
+  "runtime_apk": {
+    "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-apk/resolve/main/qnn-vad-asr-simulated-streaming/1.13.4/sherpa-onnx-1.13.4-qnn-arm64-v8a-simulated_streaming_asr-zh_en_ko_ja_yue-5-seconds-sense_voice_2024_07_17_int8.apk?download=true",
+    "sha256": "44818f0ad939c458c96a2414928f6fd49361fe5d5bf314fec962a90ed892be28"
+  },
+  "model": {
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models-qnn-binary/sherpa-onnx-qnn-SM8750-binary-5-seconds-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8.tar.bz2",
+    "sha256": "5cef9da6b131abc6d86815ac9c7508a9572926dfd1f7e96dbd9732c31d00ae28"
+  },
+  "native_libraries": [
+    "libsherpa-onnx-jni.so",
+    "libonnxruntime.so",
+    "libQnnHtp.so",
+    "libQnnSystem.so",
+    "libQnnHtpPrepare.so",
+    "libQnnHtpV79Stub.so",
+    "libQnnHtpV79Skel.so"
+  ]
+}

@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        com.brycewg.asrkb.asr.QnnSenseVoiceRuntime.applyFirstRunDefaults(this)
         DebugLogManager.initialize(this)
         ApiLogStore.initialize(this)
         DebugLogManager.installUncaughtExceptionHandler(this)
